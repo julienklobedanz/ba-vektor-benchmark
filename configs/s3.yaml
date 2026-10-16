@@ -1,0 +1,16 @@
+# Phase 1 Stub – S3 begrenzter RAM (Cold/Warm)
+phase: 1
+scenario: S3
+k: 10
+batch_size: 1000
+m: 16
+ef_construction: 100
+search_params: [10, 20, 40, 80, 120, 200, 400, 800]
+repetitions: 5
+warmup: false  # Cold: ohne Warm-up; Warm separat
+cache_states: [cold, warm]
+clients: 2
+throughput_duration_s: 30
+tenants: [null, 1, 2, 3]
+mem_limit_gb: 8
+status: stub

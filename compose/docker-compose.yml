@@ -1,0 +1,144 @@
+# Ein System zur Zeit: docker compose --profile <pg|mongo|qdrant> up -d
+# .env aus Repo-Root laden (Compose sucht standardmäßig im Projektverzeichnis)
+
+name: ba-vektor-benchmark
+
+services:
+  postgres:
+    profiles: ["pg"]
+    image: ${PGVECTOR_IMAGE:-pgvector/pgvector:0.8.7-pg17}
+    container_name: bench-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bench}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bench_dummy_pg}
+      POSTGRES_DB: ${POSTGRES_DB:-bench}
+      MEM_LIMIT: ${MEM_LIMIT:-10g}
+      CPUSET_DB: ${CPUSET_DB:-0-2}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf.tpl:/etc/postgresql/postgresql.conf.tpl:ro
+      - ./postgres/docker-entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
+    entrypoint: ["/bin/bash", "/docker-entrypoint-wrapper.sh"]
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    mem_limit: ${MEM_LIMIT:-10g}
+    memswap_limit: ${MEM_LIMIT:-10g}
+    cpuset: ${CPUSET_DB:-0-2}
+    shm_size: ${MEM_LIMIT:-10g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  mongodb:
+    profiles: ["mongo"]
+    image: ${MONGO_IMAGE:-mongodb/mongodb-community-server:8.3.13-ubi8}
+    container_name: bench-mongodb
+    hostname: mongodb
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo/mongod.conf.tpl:/etc/mongod.conf.tpl:ro
+      - ./mongo/render-mongod-conf.sh:/render-mongod-conf.sh:ro
+    environment:
+      WIREDTIGER_CACHE_GB: ${WIREDTIGER_CACHE_GB:-2}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /render-mongod-conf.sh
+        # Offizielles Community-Image: docker-entrypoint.py
+        if [[ -x /usr/local/bin/docker-entrypoint.py ]]; then
+          exec python3 /usr/local/bin/docker-entrypoint.py mongod --config /etc/mongod.conf --replSetMember=mongodb:27017
+        else
+          exec docker-entrypoint.sh mongod --config /etc/mongod.conf --replSetMember=mongodb:27017
+        fi
+    mem_limit: ${MEM_LIMIT_MONGOD:-5g}
+    memswap_limit: ${MEM_LIMIT_MONGOD:-5g}
+    cpuset: ${CPUSET_DB:-0-2}
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  mongo-init:
+    profiles: ["mongo"]
+    image: ${MONGO_IMAGE:-mongodb/mongodb-community-server:8.3.13-ubi8}
+    container_name: bench-mongo-init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./mongo/init-rs.sh:/init-rs.sh:ro
+      - ../secrets/mongot_password:/passwordFile:ro
+    environment:
+      MONGOT_USER: ${MONGOT_USER:-mongotUser}
+      MONGO_HOST: mongodb:27017
+    entrypoint: ["/bin/bash", "/init-rs.sh"]
+    restart: "no"
+
+  mongot:
+    profiles: ["mongo"]
+    image: ${MONGOT_IMAGE:-mongodb/mongodb-community-search:1.70.5}
+    container_name: bench-mongot
+    hostname: mongot
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9946:9946"
+    volumes:
+      - mongot_data:/data/mongot
+      - ./mongo/mongot.conf:/mongot-community/config.default.yml:ro
+      - ../secrets/mongot_password:/passwordFile:ro
+    # JVM-Heap: offizielle Doku --jvm-flags (nicht Env). Compose substituiert MONGOT_JVM_HEAP.
+    command:
+      - --jvm-flags
+      - -Xms${MONGOT_JVM_HEAP:-2g} -Xmx${MONGOT_JVM_HEAP:-2g}
+    mem_limit: ${MEM_LIMIT_MONGOT:-5g}
+    memswap_limit: ${MEM_LIMIT_MONGOT:-5g}
+    cpuset: ${CPUSET_DB:-0-2}
+    healthcheck:
+      # Image hat oft kein curl: curl → wget → bash /dev/tcp HTTP-GET; Body muss SERVING enthalten.
+      test:
+        [
+          "CMD-SHELL",
+          "body=$$(if command -v curl >/dev/null 2>&1; then curl -sf http://127.0.0.1:8080/health; elif command -v wget >/dev/null 2>&1; then wget -qO- http://127.0.0.1:8080/health; else exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; cat <&3; fi) && echo \"$$body\" | grep -q SERVING",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  qdrant:
+    profiles: ["qdrant"]
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.2}
+    container_name: bench-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    mem_limit: ${MEM_LIMIT:-10g}
+    memswap_limit: ${MEM_LIMIT:-10g}
+    cpuset: ${CPUSET_DB:-0-2}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  pg_data:
+  mongo_data:
+  mongot_data:
+  qdrant_data:

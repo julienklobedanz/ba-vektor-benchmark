@@ -1,0 +1,16 @@
+# Phase 0 – Machbarkeitsprüfung (1 Wiederholung, reduzierter Sweep)
+phase: 0
+scenario: phase0
+k: 10
+batch_size: 1000
+m: 16
+ef_construction: 100
+# Ein Betriebspunkt für Smoke; Phase 1 sweept die volle Liste
+search_params: [100]
+repetitions: 1
+warmup: true
+clients: 2
+throughput_duration_s: 30
+index_ready_timeout_s: 7200
+# null = ungefiltert; 1/2/3 = Selektivität 50%/10%/1%
+tenants: [null, 1, 2, 3]

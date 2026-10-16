@@ -1,0 +1,8 @@
+psycopg[binary]==3.3.6
+pgvector==0.5.1
+pymongo==4.19.0
+qdrant-client==1.19.1
+numpy==2.5.4
+pyarrow==26.0.0
+PyYAML==6.0.3
+tqdm==4.70.1

@@ -1,0 +1,20 @@
+# Daten und Ergebnisse
+data/**
+!data/SHA256SUMS
+!data/.gitkeep
+results/raw/
+results/image_digests.txt
+
+# Secrets
+.env
+secrets/**
+!secrets/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# OS / Editor
+.DS_Store

@@ -1,0 +1,14 @@
+# Phase 1 Stub – S1 kleine RAG-Wissensbasis
+phase: 1
+scenario: S1
+k: 10
+batch_size: 1000
+m: 16
+ef_construction: 100
+search_params: [10, 20, 40, 80, 120, 200, 400, 800]
+repetitions: 5
+warmup: true
+clients: 2
+throughput_duration_s: 30
+tenants: [null]
+status: stub
