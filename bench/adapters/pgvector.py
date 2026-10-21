@@ -29,6 +29,10 @@ class PgVectorAdapter:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
         register_vector(self._conn)
         with self._conn.cursor() as cur:
+            # psycopg bereitet Queries ab der 5. Ausführung serverseitig vor; Postgres kann dann
+            # einen generischen Plan ohne Kenntnis von tenant_id wählen (bei schiefer Verteilung
+            # falsch: exakter Sort über 50 % der Zeilen). force_custom_plan plant mit echten Werten.
+            cur.execute("SET plan_cache_mode = force_custom_plan")
             cur.execute(f"SET hnsw.iterative_scan = {self._iterative_scan}")
             cur.execute(f"SET hnsw.ef_search = {self._ef_search}")
 
@@ -75,6 +79,9 @@ class PgVectorAdapter:
 
     def build_index(self, m: int, ef_construction: int) -> None:
         with self._cur() as cur:
+            # Planer-Statistik nach Bulk-Load aktualisieren (Standardpraxis; ohne ANALYZE
+            # schätzt der Planer Mandantengrößen falsch → "Failure to Optimize").
+            cur.execute(f"ANALYZE {self.table}")
             cur.execute(
                 f"""
                 CREATE INDEX {self.table}_hnsw

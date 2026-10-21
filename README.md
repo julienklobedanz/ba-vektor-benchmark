@@ -112,6 +112,9 @@ HNSW, **m / maxEdges = 16**, **ef_construction / ef_construct / numEdgeCandidate
 6. **mongot-Healthcheck**  
    Das Search-Image enthält oft kein `curl`. Compose versucht `curl` → `wget` → bash `/dev/tcp` HTTP-GET; Antwort muss `SERVING` enthalten. Vom Host zusätzlich: `curl -s http://127.0.0.1:8080/health`.
 
+6. **Postgres: `plan_cache_mode = force_custom_plan`**  
+   psycopg bereitet wiederholte Queries serverseitig vor (prepare_threshold=5). Postgres kann danach einen generischen Plan nutzen, der `tenant_id` nicht kennt; bei der schiefen Mandantenverteilung führte das in Phase 0 zu exakter Sortierung über 50 % der Zeilen (p50 ≈ 199 ms statt ≈ 2 ms). Mit `force_custom_plan` plant Postgres jede Query mit den echten Parametern. Zusätzlich `ANALYZE` nach dem Bulk-Load.
+
 ## Datensatz
 
 VectorDBBench-Aufbereitung von Cohere wikipedia-22-12, 768 dim, **COSINE**:
