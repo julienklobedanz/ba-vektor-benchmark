@@ -24,12 +24,28 @@ def dataset_dir(root: Path, name: str) -> Path:
     return mapping[name]
 
 
-def _read_emb_column(path: Path) -> np.ndarray:
-    table = pq.read_table(path)
-    col_name = "emb" if "emb" in table.column_names else table.column_names[-1]
-    col = table.column(col_name)
-    flat = col.combine_chunks().flatten().to_numpy()
-    return np.asarray(flat, dtype=np.float32).reshape(-1, DIM)
+def _read_emb_column(path: Path, batch_size: int = 50_000) -> np.ndarray:
+    """Liest die Embedding-Spalte batchweise direkt in ein float32-Array (n, DIM).
+
+    Speicherschonend: Die Parquet-Datei speichert float64-Listen; ein Komplett-Read
+    (Arrow-Tabelle + Kopien) braucht bei 1 Mio. Vektoren > 12 GB. Batchweise bleibt
+    der Spitzenbedarf bei ~3 GB (Zielarray) + einem Batch.
+    """
+    pf = pq.ParquetFile(path)
+    names = pf.schema_arrow.names
+    col_name = "emb" if "emb" in names else names[-1]
+    n = pf.metadata.num_rows
+    out = np.empty((n, DIM), dtype=np.float32)
+    pos = 0
+    for batch in pf.iter_batches(batch_size=batch_size, columns=[col_name]):
+        flat = batch.column(0).flatten().to_numpy(zero_copy_only=False)
+        rows = len(batch)
+        out[pos : pos + rows] = flat.reshape(rows, DIM)
+        pos += rows
+        del flat, batch
+    if pos != n:
+        raise ValueError(f"{path}: {pos} Zeilen gelesen, erwartet {n}")
+    return out
 
 
 def _read_id_column(path: Path) -> np.ndarray:
@@ -47,9 +63,11 @@ def _read_neighbors(path: Path) -> np.ndarray:
 
 
 def l2_normalize(vectors: np.ndarray) -> np.ndarray:
+    """In-place-Normalisierung (keine zweite Kopie des Datensatzes)."""
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms = np.maximum(norms, 1e-12)
-    return vectors / norms
+    np.maximum(norms, 1e-12, out=norms)
+    vectors /= norms
+    return vectors
 
 
 def assign_tenants(n: int, seed: int = TENANT_SEED) -> np.ndarray:
@@ -147,12 +165,19 @@ def compute_filtered_gt(
         raise ValueError(f"Keine Punkte für tenant_id={tenant_id}")
     subset_ids = ids[mask]
     subset = train[mask]
-    scores = test @ subset.T
-    k_eff = min(k, scores.shape[1])
-    top_local = np.argpartition(-scores, kth=k_eff - 1, axis=1)[:, :k_eff]
-    row = np.arange(scores.shape[0])[:, None]
-    ordered = top_local[row, np.argsort(-scores[row, top_local], axis=1)]
-    result = subset_ids[ordered].astype(np.int64)
+    k_eff = min(k, subset.shape[0])
+    result = np.empty((test.shape[0], k_eff), dtype=np.int64)
+    # Query-Chunks: Score-Matrix bleibt klein (z. B. 50 × 500k float32 ≈ 100 MB)
+    chunk = 50
+    for start in range(0, test.shape[0], chunk):
+        end = min(start + chunk, test.shape[0])
+        scores = test[start:end] @ subset.T
+        np.negative(scores, out=scores)
+        top_local = np.argpartition(scores, kth=k_eff - 1, axis=1)[:, :k_eff]
+        row = np.arange(end - start)[:, None]
+        ordered = top_local[row, np.argsort(scores[row, top_local], axis=1)]
+        result[start:end] = subset_ids[ordered]
+        del scores, top_local
     if out_path is not None:
         np.save(out_path, result)
     return result
