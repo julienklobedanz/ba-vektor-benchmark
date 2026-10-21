@@ -59,7 +59,6 @@ fi
 
 echo "==> Compose-Skripte ausführbar"
 chmod +x compose/postgres/docker-entrypoint-wrapper.sh \
-  compose/mongo/render-mongod-conf.sh \
   compose/mongo/init-rs.sh \
   scripts/*.sh
 

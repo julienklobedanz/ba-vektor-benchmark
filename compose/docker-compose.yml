@@ -42,20 +42,16 @@ services:
       - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
-      - ./mongo/mongod.conf.tpl:/etc/mongod.conf.tpl:ro
-      - ./mongo/render-mongod-conf.sh:/render-mongod-conf.sh:ro
-    environment:
-      WIREDTIGER_CACHE_GB: ${WIREDTIGER_CACHE_GB:-2}
-    entrypoint: ["/bin/bash", "-c"]
+      - ./mongo/mongod.conf:/etc/mongod.conf:ro
+    # Image-Entrypoint (python3 docker-entrypoint.py) bleibt; Container läuft nicht als root,
+    # daher keine Config-Generierung zur Laufzeit. Cache-Größe per CLI-Flag aus .env.
     command:
-      - |
-        /render-mongod-conf.sh
-        # Offizielles Community-Image: docker-entrypoint.py
-        if [[ -x /usr/local/bin/docker-entrypoint.py ]]; then
-          exec python3 /usr/local/bin/docker-entrypoint.py mongod --config /etc/mongod.conf --replSetMember=mongodb:27017
-        else
-          exec docker-entrypoint.sh mongod --config /etc/mongod.conf --replSetMember=mongodb:27017
-        fi
+      - mongod
+      - --config
+      - /etc/mongod.conf
+      - --replSetMember=mongodb:27017
+      - --wiredTigerCacheSizeGB
+      - "${WIREDTIGER_CACHE_GB:-2}"
     mem_limit: ${MEM_LIMIT_MONGOD:-5g}
     memswap_limit: ${MEM_LIMIT_MONGOD:-5g}
     cpuset: ${CPUSET_DB:-0-2}
@@ -70,6 +66,7 @@ services:
     profiles: ["mongo"]
     image: ${MONGO_IMAGE:-mongodb/mongodb-community-server:8.3.13-ubi8}
     container_name: bench-mongo-init
+    user: "0"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -97,8 +94,12 @@ services:
       - mongot_data:/data/mongot
       - ./mongo/mongot.conf:/mongot-community/config.default.yml:ro
       - ../secrets/mongot_password:/passwordFile:ro
-    # JVM-Heap: offizielle Doku --jvm-flags (nicht Env). Compose substituiert MONGOT_JVM_HEAP.
-    command:
+    # Image-Entrypoint ist `sh -c "<fester Befehl>"` und ignoriert angehängte Argumente.
+    # Daher Entrypoint ersetzen, damit --jvm-flags (offizielle Doku) wirklich ankommt.
+    entrypoint:
+      - /mongot-community/mongot
+      - --config
+      - /mongot-community/config.default.yml
       - --jvm-flags
       - -Xms${MONGOT_JVM_HEAP:-2g} -Xmx${MONGOT_JVM_HEAP:-2g}
     mem_limit: ${MEM_LIMIT_MONGOT:-5g}
