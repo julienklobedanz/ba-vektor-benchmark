@@ -24,9 +24,11 @@ class PgVectorAdapter:
 
     def connect(self) -> None:
         self._conn = psycopg.connect(self.dsn, autocommit=True)
-        register_vector(self._conn)
+        # Extension muss existieren, bevor der vector-Typ registriert werden kann
         with self._conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        register_vector(self._conn)
+        with self._conn.cursor() as cur:
             cur.execute(f"SET hnsw.iterative_scan = {self._iterative_scan}")
             cur.execute(f"SET hnsw.ef_search = {self._ef_search}")
 
